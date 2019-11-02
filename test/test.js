@@ -164,3 +164,51 @@ test('handles nested requires', t => {
 	t.is(foo.code, 'require("/bar.js"); a b x z');
 	t.is(foo.required['/bar.js'].code, 'require("/baz.js"); a b x z');
 });
+
+test('test ERR_REQUIRE_ESM suppression', t => {
+	class ERR_REQUIRE_ESM extends Error {
+	}
+	ERR_REQUIRE_ESM.prototype.code = 'ERR_REQUIRE_ESM';
+
+	const fooFile = require.resolve('./fixture/foo-esm.foo');
+	const system = new MockSystem({
+		[fooFile]: 'mock file gets ignored by default .js handler'
+	});
+
+	system.extensions['.foo'] = function () {
+		// This will get replaced by the default `.js` handler
+		throw new ERR_REQUIRE_ESM('');
+	};
+
+	const expected = 'module.exports = "foo";';
+	let throwType = 'none';
+	system.appendTransform(code => {
+		switch (throwType) {
+			case 'none':
+				return expected;
+			case 'syntax':
+				throw new SyntaxError('simulate CJS parsing ESM');
+			case 'normal':
+				throw new Error('simulate non-parse error');
+			default:
+				return code;
+		}
+	}, '.foo');
+
+	const module = system.load(fooFile);
+	t.is(module.code, expected);
+
+	delete system.cache[fooFile];
+	throwType = 'syntax';
+	t.throws(
+		() => system.load(fooFile),
+		ERR_REQUIRE_ESM
+	);
+
+	delete system.cache[fooFile];
+	throwType = 'normal';
+	t.throws(
+		() => system.load(fooFile),
+		'simulate non-parse error'
+	);
+});
